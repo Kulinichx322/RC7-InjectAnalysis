@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Fail closed on the current Analysis release source invariants that protect the RC7 baseline."""
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
+src = root / 'Sources'
+errors = []
+
+entry = (src / 'RCEntry.mm').read_text(encoding='utf-8')
+if '@"URL"' in entry or '[@"URL"]' in entry:
+    errors.append('RCEntry uses uppercase URL key; RC7 native schema is lowercase url')
+for token in ('@"type": @"url"', '@"url": @"rcanalysis://injection"', '@"url": @"rcanalysis://environment"'):
+    if token not in entry:
+        errors.append(f'RCEntry missing required native-menu token: {token}')
+
+all_text = '\n'.join(p.read_text(encoding='utf-8', errors='replace') for p in src.iterdir() if p.suffix in ('.h', '.m', '.mm'))
+for pattern, label in [
+    (r'\bremoveItemAt(?:Path|URL)\s*:', 'file deletion'),
+    (r'\bunregisterApplication\s*:', 'LaunchServices unregister'),
+    (r'\bwriteToFile\s*:', 'file write'),
+    (r'\bwriteToURL\s*:', 'file write'),
+    (r'\bsetDefaults\s*:', 'RootHide settings write'),
+    (r'\b(?:unlink|unlinkat|rmdir|rename)\s*\(', 'POSIX filesystem mutation'),
+    (r'\b(?:system|posix_spawn|posix_spawnp)\s*\(', 'external process spawn'),
+]:
+    if re.search(pattern, all_text):
+        errors.append(f'forbidden Analysis mutation primitive present: {label}')
+
+black = (src / 'RCBlacklistStateScanner.m').read_text(encoding='utf-8')
+if 'RootHideConfig.plist' not in black or 'appconfig' not in black or 'blacklistDisabled' not in black:
+    errors.append('read-only blacklist scanner is missing expected RC7 config keys')
+
+dpkg = (src / 'RCDpkgResolver.m').read_text(encoding='utf-8')
+if 'RCDetectionConfidenceHigh' not in dpkg or 'RCDetectionConfidenceMedium' not in dpkg or 'ownersByBasename' not in dpkg:
+    errors.append('DPKG resolver does not preserve exact-path vs basename confidence split')
+
+app = (src / 'RCAppScanner.m').read_text(encoding='utf-8')
+for token in ('bundleURL.isFileURL', 'pathExtension.lowercaseString', '_TrollStore', '_TrollStoreLite'):
+    if token not in app:
+        errors.append(f'App scanner missing conservative/source token: {token}')
+
+mach = (src / 'RCMachOScanner.m').read_text(encoding='utf-8')
+for token in ('/var/containers/Bundle/Application/', '.troll-fools.bak', 'minusSet:before', 'activeDifferenceConfirmed = YES', 'result.scanAttempted = YES', '不作未发现结论'):
+    if token not in mach:
+        errors.append(f'Mach-O scanner missing TrollFools evidence invariant: {token}')
+for token in ('maxEntries', 'result.truncated = YES', 'result.entriesVisited', 'deadline', 'timeBudgetExceeded', '@"entry-limit"', '@"per-app-time"'):
+    if token not in mach:
+        errors.append(f'current-release bounded evidence-scan invariant missing: {token}')
+
+manager = (src / 'RCAnalysisManager.m').read_text(encoding='utf-8')
+for token in ('scanInProgress', 'pendingCompletions', 'refresh coalesced into active scan',
+              'RCEmbeddedEntryLimitPerApp', 'RCEmbeddedTimeLimitPerApp', 'RCEmbeddedTotalTimeLimit', 'embeddedAppsTruncated',
+              'embeddedAppsTimeLimited', 'embeddedAppsSkippedByGlobalBudget',
+              'launchServicesAvailable', 'tweakScanAvailable', 'dpkgStatusAvailable', 'dpkgInfoAvailable'):
+    if token not in manager:
+        errors.append(f'current-release scan-coalescing/budget invariant missing: {token}')
+
+view = (src / 'RCAnalysisViewController.m').read_text(encoding='utf-8')
+for token in ('扫描摘要', 'TrollFools 证据为部分扫描', 'embeddedAppsTruncated',
+              'RootHide tweak 扫描不可用', '双来源判定条件不完整', 'global-skipped', 'Scan %@', 'shareReport', 'fullReadOnlyReportForSnapshot'):
+    if token not in view:
+        errors.append(f'current-release partial-scan UI invariant missing: {token}')
+
+
+env = (src / 'RCEnvironmentViewController.m').read_text(encoding='utf-8')
+for token in ('孤立注册扫描不可用', 'DPKG 来源分析不完整', '未安装目标分析不可用', 'shareReport', 'fullReadOnlyReportForSnapshot'):
+    if token not in env:
+        errors.append(f'current-release fail-unknown environment UI invariant missing: {token}')
+
+
+diag = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('READ ONLY DIAGNOSTIC REPORT', '[Capabilities]', '[Metrics]', '[Budget / Anomaly Locator]', 'Scan-ID:', '[Multi-match Apps]', '[Orphan Registrations]', '[Embedded / TrollFools Evidence]'):
+    if token not in diag:
+        errors.append(f'current-release diagnostic-report invariant missing: {token}')
+if 'writeToFile' in diag or 'writeToURL' in diag:
+    errors.append('current-release diagnostic report must remain in-memory/read-only')
+
+detail = (src / 'RCAppDetailViewController.m').read_text(encoding='utf-8')
+for token in ('embeddedScanTruncated', 'embeddedScanAttempted', 'embeddedScanStopReason', 'Layer 0 · 数据源完整性', 'Layer 4 · 运行时进程证明', '未执行 TrollFools 深度扫描', 'TrollFools 证据扫描不完整'):
+    if token not in detail:
+        errors.append(f'current-release App-detail partial-scan invariant missing: {token}')
+
+path = (src / 'RCPath.mm').read_text(encoding='utf-8')
+for token in ('RCResolveJBRoot', 'RCJBRootAvailable', 'RCJBRootImagePath', 'dladdr'):
+    if token not in path:
+        errors.append(f'current-release RootHide compatibility token missing: {token}')
+
+models = (src / 'RCModels.h').read_text(encoding='utf-8')
+for token in ('RCEnvironmentProfile', 'RCScanTimelineEvent', 'environmentProfile', 'timeline', 'scanIdentifier', 'embeddedTimeLimitPerApp', 'embeddedTotalTimeLimit'):
+    if token not in models:
+        errors.append(f'current-release environment/timeline model token missing: {token}')
+
+manager = (src / 'RCAnalysisManager.m').read_text(encoding='utf-8')
+for token in ('RCTimelineAdd', '@"preflight"', '@"tweak+dpkg"', '@"launchservices"', '@"blacklist"', '@"match-graph"', '@"embedded"', 'environmentProfile'):
+    if token not in manager:
+        errors.append(f'current-release timeline/environment manager token missing: {token}')
+
+diag = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('[Environment Profile]', '[Timeline]', 'RootHideDetected=', 'TweakInject:', 'DPKG-status:', 'RootHideConfig:'):
+    if token not in diag:
+        errors.append(f'current-release report compatibility token missing: {token}')
+
+env = (src / 'RCEnvironmentViewController.m').read_text(encoding='utf-8')
+for token in ('RootHide 运行环境', '扫描时间线', 'environmentProfile', 'pathMappingActive'):
+    if token not in env:
+        errors.append(f'current-release compatibility UI token missing: {token}')
+
+detail = (src / 'RCAppDetailViewController.m').read_text(encoding='utf-8')
+for token in ('匹配原因：Filter.Bundles 包含', 'Filter plist：', 'Filter.Bundles：'):
+    if token not in detail:
+        errors.append(f'current-release App match-explanation token missing: {token}')
+
+
+# current release: every registered App must be reachable through a searchable, read-only
+# deep-analysis browser. Detail UI must keep capability-aware fail-unknown behavior.
+browser_path = src / 'RCAppBrowserViewController.m'
+if not browser_path.exists():
+    errors.append('current-release App browser implementation missing')
+else:
+    browser = browser_path.read_text(encoding='utf-8')
+    for token in ('UISearchController', '名称或 Bundle ID', 'LaunchServices 不可用',
+                  'initWithAppRecord:app snapshot:self.snapshot'):
+        if token not in browser:
+            errors.append(f'current-release App-browser invariant missing: {token}')
+
+view = (src / 'RCAnalysisViewController.m').read_text(encoding='utf-8')
+for token in ('单 App 深度分析', '浏览全部已注册 App', 'RCAppBrowserViewController',
+              'initWithAppRecord:app snapshot:self.snapshot'):
+    if token not in view:
+        errors.append(f'current-release deep-analysis entry invariant missing: {token}')
+
+detail = (src / 'RCAppDetailViewController.m').read_text(encoding='utf-8')
+for token in ('注入摘要', '组合判定', 'readOnlyReportForApp:self.record snapshot:self.snapshot',
+              'TweakInject 数据源未通过 preflight', 'DPKG capability 不完整',
+              'backup-diff', '不单独等于‘插件冲突’'):
+    if token not in detail:
+        errors.append(f'current-release App deep-analysis invariant missing: {token}')
+
+diag = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('APP READ ONLY REPORT', '[RootHide Filter Matches]',
+              '[Embedded / TrollFools Evidence]', '[Evidence Layers]', 'Layer4-RuntimeProcessProof', '[Interpretation]',
+              'dual-source injection evidence, not proof of a runtime conflict', 'NOT SCANNED:', 'EmbeddedScanAttempted='):
+    if token not in diag:
+        errors.append(f'current-release per-App report invariant missing: {token}')
+
+mk = (root / 'Makefile').read_text(encoding='utf-8')
+source_files = sorted(p.relative_to(root).as_posix() for p in src.iterdir() if p.suffix in ('.m', '.mm'))
+listed = re.findall(r'Sources/[A-Za-z0-9_+.-]+\.(?:mm|m)\b', mk)
+if set(source_files) != set(listed):
+    errors.append(f'Makefile source mismatch: missing={sorted(set(source_files)-set(listed))}, extra={sorted(set(listed)-set(source_files))}')
+if len(listed) != len(set(listed)):
+    errors.append('Makefile contains duplicate source entries')
+
+
+# current-release build/runtime identity must be centralized and report the actually loaded dylib.
+build_h = src / 'RCBuildInfo.h'
+build_m = src / 'RCBuildInfo.m'
+entry_status_h = src / 'RCEntryStatus.h'
+for required in (build_h, build_m, entry_status_h):
+    if not required.exists():
+        errors.append(f'current-release build/runtime identity file missing: {required.name}')
+if build_h.exists():
+    build_header = build_h.read_text(encoding='utf-8')
+    if 'extern "C"' not in build_header:
+        errors.append('current-release RCBuildInfo C linkage guard missing for Objective-C++ caller')
+if entry_status_h.exists():
+    status_header = entry_status_h.read_text(encoding='utf-8')
+    if 'extern "C"' not in status_header:
+        errors.append('current-release RCEntryStatus C linkage guard missing for Objective-C caller')
+if build_m.exists():
+    build_text = build_m.read_text(encoding='utf-8')
+    for token in ('kRCAnalysisVersion = RC_ANALYSIS_VERSION', 'RCAnalysisLoadedImagePath', 'RCAnalysisLoadedImageUUID', 'LC_UUID', 'RCAnalysisRuntimeArchitecture', 'RCAnalysisBuildManifest', 'RCInjectAnalysis.buildinfo.plist'):
+        if token not in build_text:
+            errors.append(f'current-release build identity token missing: {token}')
+entry = (src / 'RCEntry.mm').read_text(encoding='utf-8')
+for token in ('RCAnalysisVersion()', 'RCAnalysisMenuHooksInstalled', 'RCAnalysisMenuHookInstallAttempts', 'gInstallAttempts'):
+    if token not in entry:
+        errors.append(f'current-release menu-hook identity token missing: {token}')
+models = (src / 'RCModels.h').read_text(encoding='utf-8')
+for token in ('analysisImageUUID', 'analysisBuildManifestPresent', 'analysisBuildManifestVersionMatches', 'analysisMenuHooksInstalled', 'analysisMenuHookInstallAttempts'):
+    if token not in models:
+        errors.append(f'current-release runtime identity model token missing: {token}')
+diag = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('[Build / Runtime Identity]', 'LoadedImageUUID=', 'ManifestPresent=', 'ManifestDylibSHA256=', 'MenuHooksInstalled=', 'Analysis build manifest', 'Analysis dylib identity'):
+    if token not in diag:
+        errors.append(f'current-release runtime identity report/preflight token missing: {token}')
+env = (src / 'RCEnvironmentViewController.m').read_text(encoding='utf-8')
+for token in ('Analysis / RootHide 运行环境', '载入状态：', 'analysisImageUUID', 'analysisBuildManifestDylibSHA256'):
+    if token not in env:
+        errors.append(f'current-release runtime identity UI token missing: {token}')
+
+# Keep the user-visible Analysis version single-sourced from RCBuildInfo.m.
+for source in src.iterdir():
+    if source.suffix not in ('.h', '.m', '.mm') or source.name == 'RCBuildInfo.m':
+        continue
+    text = source.read_text(encoding='utf-8', errors='replace')
+    if source.name == 'RCVersion.generated.h':
+        continue
+    if 'RC_ANALYSIS_VERSION' in text and source.name != 'RCBuildInfo.m':
+        errors.append(f'generated version macro referenced outside RCBuildInfo.m: {source.name}')
+
+integ = root / 'Integration'
+for required in ('make_build_manifest.py', 'verify_build_manifest.py', 'verify_release.py', 'verify_package_delta.py'):
+    if not (integ / required).exists():
+        errors.append(f'current-release integration identity verifier missing: {required}')
+builder = (integ / 'build_rc7_deb.sh').read_text(encoding='utf-8')
+for token in ('RCInjectAnalysis.buildinfo.plist', 'make_build_manifest.py', 'verify_build_manifest.py', 'SUFFIX="+analysis$VERSION"'):
+    if token not in builder:
+        errors.append(f'current-release builder identity token missing: {token}')
+
+# current release: runtime self-check must bind loaded image UUID to the signed build manifest
+# and prove the host executable contains the expected weak load command.
+build_text = (src / 'RCBuildInfo.m').read_text(encoding='utf-8')
+for token in ('RCAnalysisLoadedImagePathLooksExpected', 'RCAnalysisHostHasExpectedWeakLoad', 'RCAnalysisHostWeakLoadDetail', '_dyld_get_image_header(0)', 'LC_LOAD_WEAK_DYLIB'):
+    if token not in build_text:
+        errors.append(f'current-release runtime self-check build token missing: {token}')
+models = (src / 'RCModels.h').read_text(encoding='utf-8')
+for token in ('analysisImagePathExpected', 'analysisHostWeakLoadPresent', 'analysisBuildManifestUUIDMatches', 'analysisBuildManifestSchema', 'analysisBuildID', 'analysisBuildManifestSourceTreeSHA256', 'analysisBuildManifestSourceFileCount', 'analysisRuntimeSelfCheckStatus', 'analysisRuntimeSelfCheckSummary'):
+    if token not in models:
+        errors.append(f'current-release runtime self-check model token missing: {token}')
+diag = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('DylibUUIDs', 'manifest-uuid', 'manifest-schema', 'manifest-build-id', 'manifest-source-provenance', 'BuildID=', 'SourceTreeSHA256=', 'host-weak-load', '[Runtime Release Self-Check]', 'RuntimeSelfCheck=', 'RC7 host weak load', 'Runtime release self-check'):
+    if token not in diag:
+        errors.append(f'current-release runtime self-check diagnostic token missing: {token}')
+env = (src / 'RCEnvironmentViewController.m').read_text(encoding='utf-8')
+for token in ('Runtime Self-Check', 'analysisHostWeakLoadPresent', 'analysisBuildManifestUUIDMatches'):
+    if token not in env:
+        errors.append(f'current-release runtime self-check UI token missing: {token}')
+
+manifest_maker = (root / 'Integration' / 'make_build_manifest.py').read_text(encoding='utf-8')
+manifest_verify = (root / 'Integration' / 'verify_build_manifest.py').read_text(encoding='utf-8')
+for text, name in ((manifest_maker, 'make_build_manifest.py'), (manifest_verify, 'verify_build_manifest.py')):
+    for token in ('ManifestSchema', 'DylibUUIDs', 'arm64', 'arm64e'):
+        if token not in text:
+            errors.append(f'current-release UUID manifest token missing in {name}: {token}')
+if '"ManifestSchema": 3' not in manifest_maker:
+    errors.append('current-release build manifest schema must be 3')
+if 'm.get("ManifestSchema") == 3' not in manifest_verify:
+    errors.append('current-release build manifest verifier must require schema 3')
+for token in ('SourceTreeSHA256', 'SourceFileCount', 'BuildID', 'source_fingerprint'):
+    if token not in manifest_maker or token not in manifest_verify:
+        errors.append(f'current-release build provenance token missing: {token}')
+
+delta = root / 'Integration' / 'verify_package_delta.py'
+if not delta.exists():
+    errors.append('current-release package-delta verifier missing')
+else:
+    delta_text = delta.read_text(encoding='utf-8')
+    for token in ('ALLOWED_CHANGED', 'ALLOWED_NEW', 'RCInjectAnalysis.dylib', 'RCInjectAnalysis.buildinfo.plist', 'DEBIAN/control'):
+        if token not in delta_text:
+            errors.append(f'current-release package-delta token missing: {token}')
+release_text = (root / 'Integration' / 'verify_release.py').read_text(encoding='utf-8')
+if 'verify_package_delta.py' not in release_text:
+    errors.append('current-release release gate must run package-delta verifier')
+builder_text = (root / 'Integration' / 'build_rc7_deb.sh').read_text(encoding='utf-8')
+if 'VERIFY_DELTA' not in builder_text or 'verify_package_delta.py' not in builder_text:
+    errors.append('current-release builder must run package-delta verifier')
+
+# Build-handoff invariants: one version source, generated ObjC header, fail-closed Theos artifact selection, and one-command release pipeline.
+for required in ('versioning.py', 'generate_version_header.py', 'verify_version_consistency.py', 'check_toolchain.py', 'find_built_dylib.py', 'release_pipeline.sh', 'make_release_receipt.py', 'source_fingerprint.py', 'make_source_snapshot.py', 'verify_source_snapshot.py'):
+    if not (integ / required).exists():
+        errors.append(f'build-handoff tool missing: {required}')
+version_file = root / 'VERSION'
+version_header = src / 'RCVersion.generated.h'
+if not version_file.is_file() or not version_header.is_file():
+    errors.append('central VERSION or generated Objective-C version header missing')
+else:
+    version_value = version_file.read_text(encoding='utf-8').strip()
+    if f'#define RC_ANALYSIS_VERSION @"{version_value}"' not in version_header.read_text(encoding='utf-8'):
+        errors.append('generated Objective-C version header does not match VERSION')
+if 'Integration/generate_version_header.py' not in mk or 'before-all::' not in mk:
+    errors.append('Makefile does not regenerate the Objective-C version header before build')
+pipeline = (integ / 'release_pipeline.sh').read_text(encoding='utf-8') if (integ / 'release_pipeline.sh').exists() else ''
+for token in ('check_toolchain.py', 'verify_version_consistency.py', 'make_source_snapshot.py', 'verify_source_snapshot.py', 'find_built_dylib.py', 'build_rc7_deb.sh', 'verify_release.py', 'make_release_receipt.py'):
+    if token not in pipeline:
+        errors.append(f'release pipeline missing stage: {token}')
+finder = (integ / 'find_built_dylib.py').read_text(encoding='utf-8') if (integ / 'find_built_dylib.py').exists() else ''
+for token in ('multiple different valid dylib builds found', 'arm64', 'arm64e', 'RC_ANALYSIS_DYLIB'):
+    if token not in finder and token != 'RC_ANALYSIS_DYLIB':
+        errors.append(f'fail-closed dylib selector invariant missing: {token}')
+if 'RC_ANALYSIS_DYLIB' not in pipeline:
+    errors.append('release pipeline lacks explicit RC_ANALYSIS_DYLIB override for ambiguous builds')
+
+receipt = (integ / 'make_release_receipt.py').read_text(encoding='utf-8') if (integ / 'make_release_receipt.py').exists() else ''
+if 'verify_release.py' not in receipt or '--built-deb' not in receipt:
+    errors.append('release receipt must self-verify the exact built deb before claiming PASS')
+for token in ('BuildID=', 'SourceTreeSHA256=', 'SourceFileCount='):
+    if token not in receipt:
+        errors.append(f'release receipt missing source/build provenance token: {token}')
+
+baseline = (root / 'Integration' / 'verify_rc7_baseline.py').read_text(encoding='utf-8')
+for token in ('EXPECTED_SHA256', 'c12b596acd1856677b8fb9753fcebdd88c7601318f10b6b7a8926e2568de687e', 'SHA-256 mismatch'):
+    if token not in baseline:
+        errors.append(f'exact RC7 baseline gate missing: {token}')
+
+
+# current-release first-device installation contract + deployment-kit invariants.
+build_h_text = (src / 'RCBuildInfo.h').read_text(encoding='utf-8')
+build_m_text = (src / 'RCBuildInfo.m').read_text(encoding='utf-8')
+for token in ('RCAnalysisHostExecutableFileState', 'RCAnalysisLoadedDylibFileState'):
+    if token not in build_h_text or token not in build_m_text:
+        errors.append(f'current-release runtime file-state API missing: {token}')
+for token in ('expected uid=0 gid=0 regular executable with setuid', 'S_ISUID', 'stat(path.fileSystemRepresentation'):
+    if token not in build_m_text:
+        errors.append(f'current-release postinstall runtime-state invariant missing: {token}')
+models_text = (src / 'RCModels.h').read_text(encoding='utf-8')
+for token in ('analysisHostExecutablePostInstallStateExpected', 'analysisHostExecutableMode', 'analysisHostExecutableSetUID', 'analysisDylibFileStateExpected'):
+    if token not in models_text:
+        errors.append(f'current-release install-state model token missing: {token}')
+diag_text = (src / 'RCDiagnostics.m').read_text(encoding='utf-8')
+for token in ('host-postinstall-state', 'dylib-file-state', 'HostExecutableState=', 'HostPostInstallState=', 'RC7 postinstall file state'):
+    if token not in diag_text:
+        errors.append(f'current-release install-state diagnostic token missing: {token}')
+env_text = (src / 'RCEnvironmentViewController.m').read_text(encoding='utf-8')
+if '安装后文件状态' not in env_text:
+    errors.append('current-release environment UI missing install-state row')
+for required in ('verify_original_deb.py', 'verify_postinstall_contract.py', 'make_deployment_kit.py', 'verify_deployment_kit.py'):
+    if not (integ / required).exists():
+        errors.append(f'current-release deployment tool missing: {required}')
+
+orig_deb_gate = (integ / 'verify_original_deb.py').read_text(encoding='utf-8') if (integ/'verify_original_deb.py').exists() else ''
+for token in ('EXPECTED_DEB_SHA256', '5392005d50c2a3e6189545e408aa4723bad401995ec508efcb48010c53d57f28', '1.3.9+bindtrust1', 'iphoneos-arm64e'):
+    if token not in orig_deb_gate:
+        errors.append(f'current-release exact original-deb gate token missing: {token}')
+
+postinstall_text = (integ / 'verify_postinstall_contract.py').read_text(encoding='utf-8') if (integ/'verify_postinstall_contract.py').exists() else ''
+for token in ('EXPECTED_POSTINST_SHA256', 'uicache -p /Applications/RootHide.app', 'chown 0:0 /Applications/RootHide.app/RootHide', 'chmod +s /Applications/RootHide.app/RootHide'):
+    if token not in postinstall_text:
+        errors.append(f'current-release postinstall contract token missing: {token}')
+pipeline_text = (integ / 'release_pipeline.sh').read_text(encoding='utf-8')
+for token in ('make_deployment_kit.py', 'verify_deployment_kit.py', 'DEPLOYMENT_KIT', 'SOURCE_PROVENANCE', 'SOURCE_SNAPSHOT'):
+    if token not in pipeline_text:
+        errors.append(f'current-release release pipeline deployment/provenance stage missing: {token}')
+kit_make=(integ/'make_deployment_kit.py').read_text(encoding='utf-8') if (integ/'make_deployment_kit.py').exists() else ''
+kit_verify=(integ/'verify_deployment_kit.py').read_text(encoding='utf-8') if (integ/'verify_deployment_kit.py').exists() else ''
+for token in ('DeploymentSchema', 'BuildIdentity', 'SourceProvenance', 'SourceSnapshot', 'PreInstall', 'BuildID', 'SourceTreeSHA256'):
+    if token not in kit_make or token not in kit_verify:
+        errors.append(f'current-release deployment provenance token missing: {token}')
+if '--preverified' not in kit_make or '--preverified' not in pipeline_text:
+    errors.append('current-release pipeline preverified optimization missing; final verify_deployment_kit must remain mandatory')
+release_text = (integ / 'verify_release.py').read_text(encoding='utf-8')
+if 'verify_original_deb.py' not in release_text:
+    errors.append('current-release release gate must pin the exact original RC7 deb')
+if 'verify_postinstall_contract.py' not in release_text:
+    errors.append('current-release final release gate must verify unchanged postinstall contract')
+
+
+# Archive-level package metadata must remain baseline-exact; build-host uid/gid must not leak into the deb.
+delta_text = (integ / 'verify_package_delta.py').read_text(encoding='utf-8')
+for token in ('archive_metadata', 'verify_archive_metadata', 'ar_metadata', 'verify_ar_metadata', 'EXPECTED_NEW_MODES', 'uname', 'gname', 'mtime'):
+    if token not in delta_text:
+        errors.append(f'current-release archive-metadata gate missing: {token}')
+repack_text = (integ / 'repack_deb_preserving_metadata.py').read_text(encoding='utf-8') if (integ/'repack_deb_preserving_metadata.py').exists() else ''
+for token in ('numeric uid=501/gid=20', 'uname/gname are root/wheel', 'rebuild_tar', 'FORMAT_ALONE', 'BASELINE_PARENT'):
+    if token not in repack_text:
+        errors.append(f'current-release baseline-aware repacker token missing: {token}')
+builder_text = (integ / 'build_rc7_deb.sh').read_text(encoding='utf-8')
+for token in ('repack_deb_preserving_metadata.py', 'numeric uid=501/gid=20', 'uname=root/gname=wheel', 'chmod 0755 "$APP/Frameworks"'):
+    if token not in builder_text:
+        errors.append(f'current-release metadata-preserving builder token missing: {token}')
+pipeline_text = (integ / 'release_pipeline.sh').read_text(encoding='utf-8')
+if 'fakeroot' in pipeline_text or 'chown -R 0:20' in builder_text:
+    errors.append('current-release pipeline must not depend on fakeroot/chown normalization; tar metadata is rebuilt from baseline')
+
+if errors:
+    for e in errors:
+        print('ERROR:', e, file=sys.stderr)
+    raise SystemExit(2)
+print(f'source invariants verified: {len(source_files)} implementation files; read-only/menu/source-detection gates present')
+print('current-release operational invariants verified: prior evidence/budget gates + UUID-bound runtime self-check + host weak-load proof + package-delta verifier')

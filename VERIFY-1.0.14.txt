@@ -1,0 +1,131 @@
+RCInjectAnalysis 1.0.14 FINAL STATIC / PROVENANCE VERIFICATION
+================================================================
+
+Scope
+-----
+Static/pre-install verification only. No real Theos+iPhoneOS SDK universal link,
+real ldid release signing, or RC7 device launch was performed in this host.
+Internal STATIC-FIXTURE artifacts were used only to exercise packaging/verifier
+semantics and are intentionally excluded from the delivered source package.
+
+Pinned RC7 baseline
+-------------------
+Full deb SHA-256:
+5392005d50c2a3e6189545e408aa4723bad401995ec508efcb48010c53d57f28
+
+Main executable SHA-256:
+c12b596acd1856677b8fb9753fcebdd88c7601318f10b6b7a8926e2568de687e
+
+Package: com.roothide.manager
+Version: 1.3.9+bindtrust1
+Architecture: iphoneos-arm64e
+Entitlements: 199 keys
+Archive baseline: numeric uid=501 gid=20, uname=root, gname=wheel (entry-by-entry preserved)
+
+1.0.14 build-source provenance
+------------------------------
+PASS  central VERSION = 1.0.14
+PASS  canonical source fingerprint over VERSION + Makefile + Sources/** + Integration/**
+PASS  SourceTreeSHA256 = 0d1f62467ccfc2baf9a46e1363d8e285ed7eda085ead86cf7f0acc7c04625e66
+PASS  SourceFileCount = 64
+PASS  deterministic source snapshot; two independent runs were byte-identical
+PASS  deterministic source snapshot SHA-256 = 26632f3f65960686bea5a0bcae9f6429b4892a18d65f2f31a83b01497c8bb656
+PASS  negative test: one-file snapshot tamper rejected
+PASS  negative test: one-byte source-tree mutation invalidated SourceTreeSHA256 and BuildID
+
+Manifest Schema 3
+-----------------
+PASS  ManifestSchema = 3
+PASS  SourceTreeSHA256 / SourceFileCount binding
+PASS  signed-dylib SHA-256 binding logic
+PASS  arm64 + arm64e LC_UUID binding logic
+PASS  deterministic BuildID derivation
+PASS  runtime report/model exposes ManifestSchema + BuildID + SourceTreeSHA256
+PASS  runtime self-check warns on missing schema/build provenance
+
+The internal structurally-valid static dylib fixture produced:
+BuildID = fdf1e407a1382b8a2c3d163accd03c20f20a15df5e2c493d4e4ac0628126c80d
+Dylib SHA-256 = a39b76b51017fc53e438b50ac5b5fa9bdfed91513b7f4dd328612609c44fa63a
+arm64 UUID  = 8B808831-964A-363A-A77C-993311EC0265
+arm64e UUID = 65506ADA-E9A5-3F25-BF43-9643F9B83BAA
+
+Important: those fixture values test the identity chain only; they are NOT a real 1.0.14 Theos/ldid release artifact.
+
+Deployment Schema 2
+-------------------
+PASS  exact install-deb SHA binding
+PASS  exact rollback-deb SHA binding
+PASS  exact release-receipt SHA binding
+PASS  exact BUILD-SOURCE.zip SHA binding
+PASS  exact SOURCE-PROVENANCE.json SHA binding
+PASS  BuildIdentity: BuildID/source tree/dylib SHA/per-slice UUID/schema cross-check
+PASS  machine-readable PreInstall contract
+PASS  RuntimeDeviceTest must remain NOT_PERFORMED pre-device
+PASS  deterministic deployment kit; identical inputs produced byte-identical ZIP
+      fixture-kit SHA-256 = 3ab5ab1d1993d654cad0b564ae43c59afdd99547aeb1ca9417cfe37c9f158c46
+PASS  negative test: provenance TreeSHA tamper rejected even after outer checksums were synchronized
+PASS  negative test: RuntimeDeviceTest=PASS semantic forgery rejected
+PASS  path traversal / unexpected-member fail-closed logic retained
+
+RC7 package integration gates retained
+--------------------------------------
+PASS  exact full-deb baseline
+PASS  exact executable baseline
+PASS  arm64 + arm64e header-padding baseline
+PASS  199 entitlement extraction/equality gate
+PASS  weak LC_LOAD_WEAK_DYLIB insertion in both slices
+PASS  patch idempotence; second patch byte-identical
+PASS  final package exact allowlist delta
+PASS  deb ar metadata preservation
+PASS  tar entry type/mode/uid/gid/uname/gname/mtime preservation
+PASS  original RC7 postinst byte-identical contract
+PASS  baseline-aware repacker remains independent of host uid/gid/fakeroot
+
+Weak load after patch
+---------------------
+arm64:  ncmds=33 sizeofcmds=4256 analysis_hits=1 weak=True remaining_padding=28480
+arm64e: ncmds=33 sizeofcmds=4336 analysis_hits=1 weak=True remaining_padding=12016
+Install name: @executable_path/Frameworks/RCInjectAnalysis.dylib
+
+Analysis safety / conservative rules retained
+---------------------------------------------
+PASS  15 Objective-C/Objective-C++ implementation files included exactly once
+PASS  read-only mutation gate
+PASS  blacklist residue = explicit YES + absent installed Bundle ID
+PASS  uninstalled Filter target remains informational
+PASS  DPKG exact-path high / basename-only medium confidence split
+PASS  50,000 entries/App embedded scan budget
+PASS  1.5s/App and 12s/global soft time budgets
+PASS  fail-unknown embedded-scan states
+PASS  RootHide configuration-permits conservative rule
+PASS  mixed-source evidence requires RootHide permitted + active embedded diff
+PASS  no delete/unregister/blacklist-write/icon-cache rebuild behavior added
+
+Tool / syntax gates
+-------------------
+PASS  Python integration scripts py_compile
+PASS  build_rc7_deb.sh shell syntax
+PASS  release_pipeline.sh shell syntax
+PASS  version consistency gate
+PASS  source invariant gate
+PASS  rule-matrix self-test
+
+Current-host real toolchain gate
+--------------------------------
+Expected return code: 2
+Actual return code: 2
+ldid: MISSING
+THEOS: MISSING
+iPhoneOS SDK: MISSING
+
+The release pipeline therefore correctly stops before pretending to build/sign an iOS release.
+
+Remaining real-device boundary
+------------------------------
+NOT PERFORMED  real Theos + iPhoneOS SDK arm64+arm64e link
+NOT PERFORMED  real ldid signing of Analysis dylib
+NOT PERFORMED  real ldid re-signing of patched RootHide with preserved entitlements
+NOT PERFORMED  final production +analysis1.0.14 deb generation
+NOT PERFORMED  final production Deployment Schema 2 kit generation
+NOT PERFORMED  RC7 device launch / Runtime Self-Check
+NOT PERFORMED  first-device scanner / false-positive validation
