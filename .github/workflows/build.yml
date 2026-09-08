@@ -1,0 +1,108 @@
+name: Build RC7 Inject Analysis
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build arm64 + arm64e RC7 Analysis
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      THEOS: ${{ github.workspace }}/theos
+      BASELINE_DEB: ${{ github.workspace }}/Baseline/com.roothide.manager_1.3.9+bindtrust1.deb
+      DIST_DIR: ${{ github.workspace }}/dist
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Show Xcode environment
+        run: |
+          set -euxo pipefail
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          clang --version
+
+      - name: Install packaging and signing tools
+        run: |
+          set -euxo pipefail
+          brew install ldid dpkg make
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install Theos
+        run: |
+          set -euxo pipefail
+          rm -rf "$THEOS"
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          test -f "$THEOS/makefiles/common.mk"
+
+      - name: Verify pinned RC7 baseline
+        run: |
+          set -euxo pipefail
+          test -f "$BASELINE_DEB"
+          shasum -a 256 "$BASELINE_DEB"
+          python3 Integration/verify_original_deb.py "$BASELINE_DEB"
+          python3 Integration/verify_version_consistency.py
+          python3 Integration/verify_source_invariants.py .
+
+      - name: Toolchain preflight
+        run: |
+          set -euxo pipefail
+          export PATH="$(brew --prefix make)/libexec/gnubin:$PATH"
+          python3 Integration/check_toolchain.py
+
+      - name: Build and package RC7 Analysis
+        id: release
+        run: |
+          set -o pipefail
+          export PATH="$(brew --prefix make)/libexec/gnubin:$PATH"
+          chmod +x Integration/*.sh
+          mkdir -p "$DIST_DIR"
+          Integration/release_pipeline.sh "$BASELINE_DEB" "$DIST_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/RCInjectAnalysis-build.log"
+
+      - name: List release artifacts
+        if: success()
+        run: |
+          set -euxo pipefail
+          find "$DIST_DIR" -maxdepth 1 -type f -print -exec shasum -a 256 {} \;
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RCInjectAnalysis-build-log-${{ github.run_number }}
+          path: RCInjectAnalysis-build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RC7 Analysis release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RC7-InjectAnalysis-1.0.14-${{ github.run_number }}
+          path: |
+            dist/*.deb
+            dist/*RELEASE-RECEIPT.txt
+            dist/*SOURCE-PROVENANCE.json
+            dist/*BUILD-SOURCE.zip
+            dist/*DEPLOYMENT-KIT.zip
+          if-no-files-found: error
+          retention-days: 30
